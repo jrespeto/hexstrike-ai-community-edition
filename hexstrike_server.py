@@ -21,7 +21,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from typing import Dict, Any, Optional
 from pathlib import Path
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, abort
 import requests
 import re
 from tool_registry import classify_intent, get_tools_for_category, format_tools_for_prompt, get_all_categories
@@ -77,6 +77,7 @@ app.config['JSON_SORT_KEYS'] = False
 # API Configuration
 API_PORT = int(os.environ.get('HEXSTRIKE_PORT', 8888))
 API_HOST = os.environ.get('HEXSTRIKE_HOST', '127.0.0.1')
+API_TOKEN = os.environ.get("HEXSTRIKE_API_TOKEN", None)  # e.g. export API_TOKEN=secret-token
 
 #Wordlists
 ROCKYOU_PATH = config_core.get_word_list_path("rockyou")
@@ -578,6 +579,22 @@ from server_core.file_ops import file_manager
 
 # API Routes
 
+@app.before_request
+def optional_bearer_auth():
+    # If no token is configured, allow all requests
+    if not API_TOKEN:
+        return
+
+    auth_header = request.headers.get("Authorization", "")
+    prefix = "Bearer "
+
+    if not auth_header.startswith(prefix):
+        abort(401, description="Unexpected authorization header format")
+
+    token = auth_header[len(prefix):]
+    if token != API_TOKEN:
+        abort(401, description="Unauthorized!")
+
 @app.route("/health", methods=["GET"])
 def health_check():
     """Health check endpoint with comprehensive tool detection"""
@@ -903,7 +920,7 @@ app.register_blueprint(api_binary_analysis_autopsy_bp)
 @app.route("/api/bot/bbot", methods=["POST"])
 def bbot_endpoint():
     """Endpoint for BBot interactions
-    
+
     parameters:
         -f Enable these flags (e.g. -f subdomain-enum)
         -rf Require modules to have this flag (e.g. -rf safe)
@@ -926,7 +943,7 @@ def bbot_endpoint():
 
         logger.info(f"📊 BBot scan completed for {target}")
         return jsonify(result)
-    
+
     except Exception as e:
         logger.error(f"💥 Error in BBot endpoint: {str(e)}")
         return jsonify({"error": f"Server error: {str(e)}"}), 500
@@ -1267,9 +1284,9 @@ def intelligent_smart_scan():
                     combined_output_parts.append(f"\n=== {tool_result['tool'].upper()} OUTPUT ===\n")
                     combined_output_parts.append(tool_result["stdout"])
                     combined_output_parts.append("\n" + "="*50 + "\n")
-        
+
         scan_results["combined_output"] = "".join(combined_output_parts)
-        
+
         # Create execution summary
         successful_tools = [t for t in scan_results["tools_executed"] if t.get("success")]
         failed_tools = [t for t in scan_results["tools_executed"] if not t.get("success")]
@@ -1823,7 +1840,7 @@ def whois():
         return jsonify({"success": result.returncode == 0, "output": output})
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
-    
+
 @app.route("/api/tools/nmap", methods=["POST"])
 def nmap():
     """Execute nmap scan with enhanced logging, caching, and intelligent error handling"""
@@ -8787,4 +8804,4 @@ if __name__ == "__main__":
         if line.strip():
             logger.info(line)
 
-    app.run(host="0.0.0.0", port=API_PORT, debug=DEBUG_MODE)
+    app.run(host=API_HOST, port=API_PORT, debug=DEBUG_MODE)
